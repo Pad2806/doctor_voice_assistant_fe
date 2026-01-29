@@ -1,7 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Groq from "groq-sdk";
-
-const groqLocal = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 interface TranscriptSegment {
     start: number;
