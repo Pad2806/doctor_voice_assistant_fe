@@ -5,11 +5,12 @@ FROM node:20-alpine AS deps
 
 WORKDIR /app
 
-# Copy package files
+# Copy package files and npmrc
 COPY package*.json ./
+COPY .npmrc* ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies with legacy peer deps
+RUN npm ci --legacy-peer-deps
 
 # ================================
 # Stage 2: Build
@@ -31,6 +32,9 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 
+# Disable Next.js telemetry
+ENV NEXT_TELEMETRY_DISABLED=1
+
 # Build the application
 RUN npm run build
 
@@ -49,6 +53,7 @@ RUN addgroup -g 1001 -S nodejs && \
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+ENV NEXT_TELEMETRY_DISABLED=1
 
 # Copy necessary files from builder
 COPY --from=builder /app/public ./public
