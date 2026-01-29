@@ -6,14 +6,6 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
-  // Ignore ESLint errors during build (for Docker)
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  // Ignore TypeScript errors during build (for Docker)
-  typescript: {
-    ignoreBuildErrors: true,
-  },
 };
 
 export default nextConfig;

@@ -1,9 +1,12 @@
 # ================================
 # Stage 1: Dependencies
 # ================================
-FROM node:20-alpine AS deps
+FROM node:20-slim AS deps
 
 WORKDIR /app
+
+# Install OpenSSL for Prisma/Drizzle (if needed)
+RUN apt-get update && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # Copy package files and npmrc
 COPY package*.json ./
@@ -15,7 +18,7 @@ RUN npm ci --legacy-peer-deps
 # ================================
 # Stage 2: Build
 # ================================
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
@@ -34,23 +37,24 @@ ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 
 # Disable Next.js telemetry
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
 
-# Skip ESLint and TypeScript errors during build (will catch in CI separately)
-ENV NEXT_SKIP_LINT=1
-
-# Build the application - ignore ESLint errors
-RUN npm run build || (cat .next/build-error.log 2>/dev/null; exit 1)
+# Build the application
+RUN npm run build
 
 # ================================
 # Stage 3: Production
 # ================================
-FROM node:20-alpine AS production
+FROM node:20-slim AS production
 
 WORKDIR /app
 
+# Install wget for healthcheck
+RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user for security
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nextjs -u 1001
+RUN groupadd -g 1001 nodejs && \
+    useradd -u 1001 -g nodejs nextjs
 
 # Set environment
 ENV NODE_ENV=production
