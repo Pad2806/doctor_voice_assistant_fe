@@ -1,0 +1,471 @@
+import { db, bookings } from '../db';
+import { examinationSessions, medicalRecords } from '../db/schema-session';
+import { users } from '../db/schema-users';
+import { eq, desc, sql, and } from 'drizzle-orm';
+import { updateVisit, type MedicalPayload } from '../integrations/hisClient';
+
+// ============= Types =============
+
+export interface SessionInput {
+    patientId?: string; // Legacy - link to users table
+    bookingId?: string; // NEW - link to bookings table (preferred)
+    chiefComplaint?: string; // Reason for this visit
+    visitId?: string; // Optional, from HIS system
+}
+
+export interface Session {
+    id: string;
+    patientId: string | null;
+    bookingId: string | null;
+    visitNumber: number;
+    chiefComplaint: string | null;
+    visitId: string | null;
+    status: 'active' | 'completed' | 'cancelled';
+    createdAt: Date;
+    updatedAt: Date;
+}
+
+export interface SessionWithPatient extends Session {
+    patient: {
+        id: string;
+        displayId: string;
+        name: string;
+        birthDate: string | null;
+        gender: string | null;
+        phoneNumber: string | null;
+        medicalHistory: string | null;
+    };
+}
+
+export interface SessionWithBooking extends Session {
+    booking: {
+        id: string;
+        displayId: string | null;
+        patientName: string;
+        patientPhone: string;
+        age: number | null;
+        gender: string | null;
+        symptoms: string | null;
+    };
+}
+
+export interface MedicalRecordInput {
+    sessionId: string;
+    subjective?: string;
+    objective?: string;
+    assessment?: string;
+    plan?: string;
+    icdCodes?: string[];
+    status: 'draft' | 'final';
+}
+
+export interface MedicalRecord {
+    id: string;
+    sessionId: string;
+    subjective: string | null;
+    objective: string | null;
+    assessment: string | null;
+    plan: string | null;
+    icdCodes: unknown;
+    status: 'draft' | 'final';
+    createdAt: Date;
+    updatedAt: Date;
+}
+
+// ============= Session Management =============
+
+/**
+ * Create a new examination session for a booking
+ * This is the primary method for creating sessions from Booking Clinic
+ */
+export async function createSessionFromBooking(bookingId: string, chiefComplaint?: string): Promise<Session> {
+    // Get visit number for this booking
+    const countResult = await db
+        .select({ count: sql<number>`cast(count(*) as integer)` })
+        .from(examinationSessions)
+        .where(eq(examinationSessions.bookingId, bookingId));
+
+    const visitNumber = (countResult[0]?.count || 0) + 1;
+
+    // Prepare session data
+    const sessionData = {
+        bookingId,
+        patientId: null, // Not using patient_id for booking-based sessions
+        visitNumber,
+        chiefComplaint: chiefComplaint || null,
+        visitId: null,
+        status: 'active' as const,
+        appointmentId: null,
+    };
+
+    // Insert into database and return
+    const result = await db.insert(examinationSessions).values(sessionData).returning();
+
+    const session = result[0];
+    return {
+        ...session,
+        status: session.status as 'active' | 'completed' | 'cancelled'
+    } as Session;
+}
+
+/**
+ * Create a new examination session for an existing patient (Legacy)
+ */
+export async function createSession(input: SessionInput): Promise<Session> {
+    // If bookingId is provided, use the new method
+    if (input.bookingId) {
+        return createSessionFromBooking(input.bookingId, input.chiefComplaint);
+    }
+
+    // Legacy: Use patientId (for backwards compatibility)
+    if (!input.patientId) {
+        throw new Error('Either patientId or bookingId is required');
+    }
+
+    // Get visit number for this patient using count
+    const countResult = await db
+        .select({ count: sql<number>`cast(count(*) as integer)` })
+        .from(examinationSessions)
+        .where(eq(examinationSessions.patientId, input.patientId));
+
+    const visitNumber = (countResult[0]?.count || 0) + 1;
+
+    // Prepare session data (PostgreSQL will handle timestamps)
+    const sessionData = {
+        patientId: input.patientId,
+        bookingId: null,
+        visitNumber,
+        chiefComplaint: input.chiefComplaint || null,
+        visitId: input.visitId || null,
+        status: 'active' as const,
+        appointmentId: null,
+    };
+
+    // Insert into database and return
+    const result = await db.insert(examinationSessions).values(sessionData).returning();
+
+    const session = result[0];
+    return {
+        ...session,
+        status: session.status as 'active' | 'completed' | 'cancelled'
+    } as Session;
+}
+
+/**
+ * Get session by ID
+ */
+export async function getSession(sessionId: string): Promise<Session | null> {
+    const results = await db
+        .select()
+        .from(examinationSessions)
+        .where(eq(examinationSessions.id, sessionId))
+        .limit(1);
+
+    const session = results[0];
+    if (!session) return null;
+
+    return {
+        ...session,
+        status: session.status as 'active' | 'completed' | 'cancelled'
+    } as Session;
+}
+
+/**
+ * Get session with booking info (NEW - for booking-based workflow)
+ */
+export async function getSessionWithBooking(sessionId: string): Promise<SessionWithBooking | null> {
+    const results = await db
+        .select({
+            session: examinationSessions,
+            booking: bookings
+        })
+        .from(examinationSessions)
+        .leftJoin(bookings, eq(examinationSessions.bookingId, bookings.id))
+        .where(eq(examinationSessions.id, sessionId))
+        .limit(1);
+
+    if (!results[0]) return null;
+
+    const { session, booking } = results[0];
+
+    return {
+        ...session,
+        status: session.status as 'active' | 'completed' | 'cancelled',
+        booking: booking ? {
+            id: booking.id,
+            displayId: booking.displayId,
+            patientName: booking.patientName,
+            patientPhone: booking.patientPhone,
+            age: booking.age,
+            gender: booking.gender,
+            symptoms: booking.symptoms,
+        } : {
+            id: '',
+            displayId: null,
+            patientName: 'Unknown',
+            patientPhone: '',
+            age: null,
+            gender: null,
+            symptoms: null,
+        }
+    };
+}
+
+/**
+ * Get session with patient info (Legacy - for patient-based workflow)
+ */
+export async function getSessionWithPatient(sessionId: string): Promise<SessionWithPatient | null> {
+    const results = await db
+        .select({
+            session: examinationSessions,
+            patient: users
+        })
+        .from(examinationSessions)
+        .leftJoin(users, and(
+            eq(examinationSessions.patientId, users.id),
+            eq(users.role, 'patient')
+        ))
+        .where(eq(examinationSessions.id, sessionId))
+        .limit(1);
+
+    if (!results[0]) return null;
+
+    const { session, patient } = results[0];
+
+    return {
+        ...session,
+        status: session.status as 'active' | 'completed' | 'cancelled',
+        patient: patient ? {
+            id: patient.id,
+            displayId: patient.displayId || 'N/A',
+            name: patient.name,
+            birthDate: patient.birthDate || null,
+            gender: patient.gender,
+            phoneNumber: patient.phone,
+            medicalHistory: patient.medicalHistory
+        } : {
+            id: '',
+            displayId: 'N/A',
+            name: 'Unknown',
+            birthDate: null,
+            gender: null,
+            phoneNumber: null,
+            medicalHistory: null
+        }
+    };
+}
+
+/**
+ * Update session status
+ */
+export async function updateSessionStatus(
+    sessionId: string,
+    status: 'active' | 'completed' | 'cancelled'
+): Promise<void> {
+    await db
+        .update(examinationSessions)
+        .set({
+            status,
+            updatedAt: new Date(),
+        })
+        .where(eq(examinationSessions.id, sessionId));
+}
+
+// ============= Medical Record Management =============
+
+/**
+ * Save or update medical record
+ */
+export async function saveMedicalRecord(input: MedicalRecordInput): Promise<MedicalRecord> {
+    // Check if record already exists for this session
+    const existingRecords = await db
+        .select()
+        .from(medicalRecords)
+        .where(eq(medicalRecords.sessionId, input.sessionId))
+        .limit(1);
+
+    const now = new Date();
+
+    if (existingRecords.length > 0) {
+        // Update existing record
+        const recordId = existingRecords[0].id;
+        await db
+            .update(medicalRecords)
+            .set({
+                subjective: input.subjective,
+                objective: input.objective,
+                assessment: input.assessment,
+                plan: input.plan,
+                icdCodes: input.icdCodes || [],
+                status: input.status,
+                updatedAt: now,
+            })
+            .where(eq(medicalRecords.id, recordId));
+
+        // Fetch updated record
+        const updated = await db
+            .select()
+            .from(medicalRecords)
+            .where(eq(medicalRecords.id, recordId))
+            .limit(1);
+
+        const record = updated[0] as MedicalRecord;
+
+        // If status is final, sync to HIS and update session
+        if (input.status === 'final') {
+            await finalizeRecord(input.sessionId, record);
+        }
+
+        return record;
+    } else {
+        // Create new record (PostgreSQL will auto-generate UUID)
+
+        const recordData = {
+            sessionId: input.sessionId,
+            subjective: input.subjective || null,
+            objective: input.objective || null,
+            assessment: input.assessment || null,
+            plan: input.plan || null,
+            icdCodes: input.icdCodes || [],
+            diagnosis: input.assessment || null, // Duplicate for Booking compatibility
+            prescription: input.plan || null, // Duplicate for Booking compatibility
+            status: input.status,
+        };
+
+        const result = await db.insert(medicalRecords).values(recordData).returning();
+
+        const record = result[0] as MedicalRecord;
+
+        // If status is final, sync to HIS and update session
+        if (input.status === 'final') {
+            await finalizeRecord(input.sessionId, record);
+        }
+
+        return record;
+    }
+}
+
+/**
+ * Get medical record by session ID
+ */
+export async function getMedicalRecordBySession(
+    sessionId: string
+): Promise<MedicalRecord | null> {
+    const results = await db
+        .select()
+        .from(medicalRecords)
+        .where(eq(medicalRecords.sessionId, sessionId))
+        .limit(1);
+
+    return results[0] ? (results[0] as MedicalRecord) : null;
+}
+
+/**
+ * Get medical record by booking ID (for viewing completed examinations)
+ * Returns booking info, session, and medical record
+ */
+export async function getMedicalRecordByBookingId(bookingId: string): Promise<{
+    booking: {
+        id: string;
+        displayId: string | null;
+        patientName: string;
+        patientPhone: string;
+        age: number | null;
+        gender: string | null;
+        symptoms: string | null;
+        address: string | null;
+        medicalHistory: string | null;
+        allergies: string | null;
+        bloodType: string | null;
+        bookingTime: Date;
+        status: string | null;
+    };
+    session: Session;
+    medicalRecord: MedicalRecord;
+} | null> {
+    // Get session for this booking
+    const sessionResults = await db
+        .select({
+            session: examinationSessions,
+            booking: bookings
+        })
+        .from(examinationSessions)
+        .leftJoin(bookings, eq(examinationSessions.bookingId, bookings.id))
+        .where(eq(examinationSessions.bookingId, bookingId))
+        .orderBy(desc(examinationSessions.createdAt))
+        .limit(1);
+
+    if (!sessionResults[0] || !sessionResults[0].booking) {
+        return null;
+    }
+
+    const { session, booking } = sessionResults[0];
+
+    // Get medical record for this session
+    const recordResults = await db
+        .select()
+        .from(medicalRecords)
+        .where(eq(medicalRecords.sessionId, session.id))
+        .limit(1);
+
+    if (!recordResults[0]) {
+        return null;
+    }
+
+    return {
+        booking: {
+            id: booking.id,
+            displayId: booking.displayId,
+            patientName: booking.patientName,
+            patientPhone: booking.patientPhone,
+            age: booking.age,
+            gender: booking.gender,
+            symptoms: booking.symptoms,
+            address: booking.address,
+            medicalHistory: booking.medicalHistory,
+            allergies: booking.allergies,
+            bloodType: booking.bloodType,
+            bookingTime: booking.bookingTime,
+            status: booking.status,
+        },
+        session: {
+            ...session,
+            status: session.status as 'active' | 'completed' | 'cancelled'
+        } as Session,
+        medicalRecord: recordResults[0] as MedicalRecord,
+    };
+}
+
+// ============= Internal Helpers =============
+
+/**
+ * Finalize medical record - sync to HIS and update session status
+ */
+async function finalizeRecord(sessionId: string, record: MedicalRecord): Promise<void> {
+    // Get session with patient info
+    const sessionWithPatient = await getSessionWithPatient(sessionId);
+
+    if (sessionWithPatient && sessionWithPatient.visitId) {
+        // Prepare payload for HIS system
+        const payload: MedicalPayload = {
+            subjective: record.subjective || '',
+            objective: record.objective || '',
+            assessment: record.assessment || '',
+            plan: record.plan || '',
+            icdCodes: (record.icdCodes as string[]) || [],
+        };
+
+        // Sync to HIS system
+        const hisResponse = await updateVisit(sessionWithPatient.visitId, payload);
+
+        if (hisResponse.success) {
+            console.log('Medical record synced to HIS successfully:', hisResponse.data);
+        } else {
+            console.error('Failed to sync to HIS:', hisResponse.error);
+            // Note: We still save locally even if HIS sync fails
+        }
+    }
+
+    // Update session status to completed
+    await updateSessionStatus(sessionId, 'completed');
+}

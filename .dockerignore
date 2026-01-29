@@ -1,0 +1,41 @@
+# Dependencies
+node_modules
+npm-debug.log
+
+# Build output (will be generated in Docker)
+.next
+out
+
+# Environment files (secrets should be set in Dokploy)
+.env
+.env.*
+!.env.example
+
+# IDE and editor files
+.idea
+.vscode
+*.swp
+*.swo
+
+# Git
+.git
+.gitignore
+
+# Tests
+__tests__
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+coverage
+
+# Documentation
+docs
+README.md
+
+# Misc
+.DS_Store
+*.log
+
+# Drizzle migrations (if not needed in production)
+drizzle
