@@ -1,68 +1,60 @@
-# Medical Examination Assistant (MEA) - FE (NextJS)
+# Medical Examination Assistant - Frontend (Trợ lý Khám bệnh - Frontend)
 
+## Tổng quan
+Đây là ứng dụng giao diện người dùng (frontend) cho hệ thống Trợ lý Khám bệnh (Medical Examination Assistant). Ứng dụng cung cấp giao diện cho bệnh nhân, bác sĩ và quản trị viên để quản lý lịch hẹn, hồ sơ y tế và hỗ trợ chẩn đoán bằng AI.
 
-```
-Bước 1: Khởi tạo phiên khám
-  └─ GET /api/v1/emr/current-session (HIS)
-  └─ Trả về: visitId, patient info, history
+## Công nghệ sử dụng
+- **Framework:** [Next.js 16](https://nextjs.org/) (App Router)
+- **Ngôn ngữ:** TypeScript
+- **Styling:** [Tailwind CSS v4](https://tailwindcss.com/)
+- **Database ORM:** [Drizzle ORM](https://orm.drizzle.team/)
+- **Xác thực & Backend Services:** [Supabase](https://supabase.com/)
+- **Tích hợp AI:**
+  - [LangChain](https://js.langchain.com/) (AI Chains & Agents)
+  - Google Gemini / Groq (Nhà cung cấp LLM)
+- **Quản lý trạng thái:** React Hooks
+- **Icons:** Lucide React
 
-Bước 2: Ghi âm & Xử lý
-  └─ Stream Audio → STT (Giọng nói → Văn bản)
-  └─ NLP Processing (Triệu chứng, Thuốc...)
+## Các tính năng chính
+- **Cổng thông tin bệnh nhân:** Đặt lịch hẹn, xem lịch sử khám bệnh.
+- **Bảng điều khiển bác sĩ:** Quản lý hàng đợi bệnh nhân, ghi chú khám bệnh (Chuyển giọng nói thành văn bản), Chẩn đoán hỗ trợ bởi AI.
+- **Trang quản trị (Admin):** Quản lý người dùng, cấu hình hệ thống.
+- **Cập nhật thời gian thực:** Sử dụng Supabase Realtime.
 
-Bước 3: Auto-fill Form
-  └─ Trigger Final Analysis
-  └─ POST /api/v1/emr/update/{visitId}
-  └─ Payload: Chẩn đoán, Triệu chứng, Sinh hiệu
+## Hướng dẫn cài đặt và chạy
 
-Bước 4: Review & Final Save
-  └─ Hiển thị dữ liệu màn hình (Draft)
-  └─ Bác sĩ chỉnh sửa
-  └─ Lưu bệnh án (Final Save) → HIS
-```
+### Yêu cầu tiên quyết
+- Node.js (khuyên dùng bản v20 trở lên)
+- npm
 
-### Flow hiện tại (đã implement)
+### Các bước cài đặt
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ DASHBOARD - Entry Point                                 │
-│ ┌─────────────┐  ┌──────────────┐                      │
-│ │ Bệnh nhân   │  │ Tìm kiếm     │                      │
-│ │ mới         │  │ bệnh nhân    │                      │
-│ └─────────────┘  └──────────────┘                      │
-│                                                          │
-│ Stats: Today | Week | Month | Total                     │
-│ Recent Sessions Table                                   │
-└─────────────────────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────────────────────┐
-│ EXAMINATION PAGE - Progressive Vertical Layout          │
-│                                                          │
-│ ┌─ Step 1: Ghi âm hội thoại ─────────────────────┐     │
-│ │ 🎙️ Bắt đầu ghi âm                               │     │
-│ │ Status: ⏳ Pending → 🔄 Active → ✅ Completed    │     │
-│ └──────────────────────────────────────────────────┘     │
-│                    ↓                                     │
-│ ┌─ Step 2: Speech-to-Text ────────────────────────┐     │
-│ │ • Whisper STT (Groq)                             │     │
-│ │ • Role Detection (Bác sĩ/Bệnh nhân)             │     │
-│ │ • Medical Text Fixer                             │     │
-│ │ • Display: Structured Transcripts                │     │
-│ └──────────────────────────────────────────────────┘     │
-│                    ↓                                     │
-│ ┌─ Step 3: AI Analysis & Review ──────────────────┐     │
-│ │ • 3 AI Agents (Scribe, ICD-10, Medical Expert)  │     │
-│ │ • SOAP Notes generation                          │     │
-│ │ • ICD-10 codes suggestion                        │     │
-│ │ • RAG-based medical advice                       │     │
-│ │ • Doctor Review Form (editable)                  │     │
-│ └──────────────────────────────────────────────────┘     │
-│                    ↓                                     │
-│ ┌─ Step 4: AI vs Doctor Comparison ───────────────┐     │
-│ │ • Semantic similarity scoring                    │     │
-│ │ • ICD code matching                              │     │
-│ │ • Overall match score (0-100%)                   │     │
-│ │ • Save to database for analytics                 │     │
-│ └──────────────────────────────────────────────────┘     │
-└─────────────────────────────────────────────────────────┘
-```
+1.  Clone repository và di chuyển vào thư mục frontend:
+    ```bash
+    cd medical-examination-assistant-fe
+    ```
+
+2.  Cài đặt các thư viện phụ thuộc (dependencies):
+    ```bash
+    npm install
+    ```
+
+3.  Cấu hình biến môi trường:
+    - Copy file `.env.example` thành `.env.local`:
+      ```bash
+      cp .env.example .env.local
+      ```
+    - Cập nhật các giá trị trong `.env.local` với thông tin thực tế của bạn (Supabase URL/Key, Database URL, AI API Keys).
+
+4.  Chạy server development:
+    ```bash
+    npm run dev
+    ```
+
+5.  Mở trình duyệt và truy cập [http://localhost:3000](http://localhost:3000).
+
+## Cấu trúc dự án
+- `/src/app`: Các trang và layout của Next.js App Router.
+- `/src/components`: Các thành phần React tái sử dụng.
+- `/src/lib`: Các hàm tiện ích, cấu hình cơ sở dữ liệu và client API.
+- `/src/lib/db`: Định nghĩa schema Drizzle.
